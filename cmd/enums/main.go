@@ -19,7 +19,7 @@ import (
 	"slices"
 
 	"github.com/iancoleman/strcase"
-	"modernc.org/cc/v3"
+	"modernc.org/cc/v4"
 	gofumpt "mvdan.cc/gofumpt/format"
 )
 
@@ -79,8 +79,7 @@ func main() {
 
 	abi := mustv(cc.NewABI(runtime.GOOS, runtime.GOARCH))
 	config := &cc.Config{
-		ABI:     abi,
-		Config3: cc.Config3{},
+		ABI: abi,
 	}
 
 	sources := []cc.Source{
@@ -94,17 +93,18 @@ func main() {
 		},
 	}
 
-	_, includePath, sysIncludePaths, err := cc.HostConfig("cpp")
+	hostConfig, err := cc.NewConfig("", "")
 	must(err)
+
+	includePath := hostConfig.IncludePaths
+	sysIncludePath := hostConfig.SysIncludePaths
 
 	inputDir, err := filepath.Abs(filepath.Dir(inputFile))
 	must(err)
 	includePath = append(includePath, inputDir)
-	includePath = append(includePath, sysIncludePaths...)
+	includePath = append(includePath, sysIncludePath...)
 
-	ast := mustv(cc.Parse(config, includePath, sysIncludePaths, sources))
-	must(ast.Typecheck())
-
+	ast := mustv(cc.Translate(config, sources))
 	var enums = Enums{}
 
 	skipTypes := []string{
@@ -114,6 +114,34 @@ func main() {
 
 	mergeTypes := map[string]string{
 		"NativeFeature": "FeatureName",
+	}
+
+	var flagTypes = map[string][]string{}
+
+	for k := range ast.TLD {
+		if !k.IsTypedefName || k.StorageClass != 1 {
+			continue
+		}
+
+		if k.Type().String() != "WGPUFlags" {
+			continue
+		}
+
+		flagTypes[k.Name().String()] = []string{}
+	}
+
+	fmt.Printf("flag types: %v\n", flagTypes)
+
+	for k := range ast.TLD {
+		t := k.Type().Name().String()
+
+		if flagTypes[t] == nil { // Not a WGPUFlags type.
+			continue
+		}
+
+		flagTypes[t] = append(flagTypes[t], k.Name().String())
+
+		fmt.Printf("flag type: %s: %s = %#v\n", k.Name().String(), t, k.LHS())
 	}
 
 loop:
